@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract BitceneToken is ERC20, Ownable {
+    using SafeMath for uint256;
+
+    // Constants
+    uint256 public constant INITIAL_SUPPLY = 1000000 * (10 ** 8); // 1,000,000 tokens with 8 decimals
+    uint256 public constant MAX_SUPPLY = 21000000 * (10 ** 8); // Maximum supply of 21,000,000 tokens with 8 decimals
+    uint256 public constant MINT_PERCENTAGE = 36; // 0.036% minting rate
+
+    // Events
+    event Mint(address indexed to, uint256 amount);
+
+    // Modifiers
+    modifier onlyAfter24Hours() {
+        require(block.timestamp >= (block.timestamp / 1 days) * 1 days + 1 days, "Can only mint once every 24 hours");
+        _;
+    }
+
+    // Variables
+    uint256 private _totalMinted;
+
+    // Constructor
+    constructor() ERC20("Bitcene", "BITCENE") {
+        _mint(msg.sender, INITIAL_SUPPLY);
+    }
+
+    // Additional Math Function
+    function add(uint256 a, uint256 b) external pure returns (uint256) {
+        return a.add(b);
+    }
+
+    // Recursion Guard
+    modifier noReentrancy() {
+        require(!_locked, "Reentrant call");
+        _locked = true;
+        _;
+        _locked = false;
+    }
+
+    // Mint new tokens and distribute to token holders
+    function mintAndDistribute() external onlyOwner onlyAfter24Hours noReentrancy {
+        uint256 currentSupply = totalSupply();
+        require(currentSupply < MAX_SUPPLY, "Maximum supply reached");
+
+        uint256 remainingSupply = MAX_SUPPLY.sub(currentSupply);
+        uint256 mintAmount = remainingSupply.mul(MINT_PERCENTAGE).div(1000000); // 0.036% of remaining supply
+        require(_totalMinted.add(mintAmount) <= MAX_SUPPLY, "Minting exceeds maximum supply");
+
+        _mint(address(this), mintAmount);
+        _totalMinted = _totalMinted.add(mintAmount);
+
+        distributeTokens();
+        emit Mint(address(this), mintAmount);
+    }
+
+    // Distribute minted tokens to token holders based on their percentage holdings
+    function distributeTokens() internal {
+        uint256 totalTokens = balanceOf(address(this));
+        if (totalTokens > 0) {
+            for (uint256 i = 0; i < _tokenHolders.length; i++) {
+                address holder = _tokenHolders[i];
+                uint256 holderPercentage = _percentageHoldings[holder];
+                uint256 distributionAmount = totalTokens.mul(holderPercentage).div(100);
+                _transfer(address(this), holder, distributionAmount);
+            }
+        }
+    }
+
+    // Add token holder and their percentage holding
+    function addTokenHolder(address holder, uint256 percentage) external onlyOwner {
+        require(holder != address(0), "Invalid address");
+        require(percentage <= 100, "Percentage exceeds 100%");
+        require(_percentageHoldings[holder] == 0, "Holder already exists");
+
+        _tokenHolders.push(holder);
+        _percentageHoldings[holder] = percentage;
+    }
+
+    // Remove token holder
+    function removeTokenHolder(address holder) external onlyOwner {
+        require(holder != address(0), "Invalid address");
+        require(_percentageHoldings[holder] > 0, "Holder does not exist");
+
+        for (uint256 i = 0; i < _tokenHolders.length; i++) {
+            if (_tokenHolders[i] == holder) {
+                _tokenHolders[i] = _tokenHolders[_tokenHolders.length - 1];
+                _tokenHolders.pop();
+                break;
+            }
+        }
+
+        delete _percentageHoldings[holder];
+    }
+
+    // Withdraw any accidentally sent ERC-20 tokens
+    function rescueTokens(address tokenAddress, uint256 amount) external onlyOwner {
+        IERC20(tokenAddress).transfer(msg.sender, amount);
+    }
+}
